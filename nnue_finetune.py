@@ -610,10 +610,34 @@ def train(cfg: TrainConfig) -> None:
     model, h1, h2 = load_from_any(cfg.from_path, input_dim=BASE_INPUT_DIM)
     model.to(device)
 
+    # Quick sanity for self-teacher engine path
+    if cfg.teacher == 'self':
+        if not cfg.engine_path:
+            print("[WARN] --engine-path not provided while --teacher self; will fall back to classical labels")
+        elif not os.path.exists(cfg.engine_path):
+            print(f"[WARN] --engine-path not found: {cfg.engine_path}; will fall back to classical labels")
+        elif not os.access(cfg.engine_path, os.X_OK):
+            print(f"[WARN] --engine-path is not executable: {cfg.engine_path}; engine launch may fail")
+        else:
+            # Preflight: try a single quick analyse on startpos
+            try:
+                b0 = chess.Board()
+                eng = chess.engine.SimpleEngine.popen_uci(cfg.engine_path)
+                lim = chess.engine.Limit(depth=(cfg.engine_depth or None), time=(cfg.engine_time or 0.02))
+                info = eng.analyse(b0, lim)
+                eng.quit()
+                s = info.get('score')
+                if s is None:
+                    print("[WARN] Engine preflight returned no score; labels may be zero or fallback")
+            except Exception as e:
+                print(f"[WARN] Failed engine preflight '{cfg.engine_path}': {e}; labels will likely fall back to classical")
+
     # Data
     if cfg.fens:
         print(f"[data] Loading FENs from {cfg.fens} (teacher={cfg.teacher})")
+        t0_gen = time.time()
         dataset = FenDataset(cfg.fens, cfg.teacher, cfg.engine_path, cfg.engine_time, cfg.engine_depth)
+        dt_gen = time.time() - t0_gen
     else:
         # Use the requested selfplay count when provided; default to 100k otherwise
         npos = cfg.selfplay if (cfg.selfplay and cfg.selfplay > 0) else 100000
@@ -624,9 +648,34 @@ def train(cfg: TrainConfig) -> None:
                 est_sec = npos * max(0.0, cfg.engine_time)
                 if est_sec > 0:
                     print(f"[data] Rough gen ETA: {est_sec/60:.1f}m (~{est_sec/3600:.2f}h) + overhead")
+        t0_gen = time.time()
         dataset = SelfPlayDataset(npos, teacher=cfg.teacher, engine_path=cfg.engine_path,
                                   engine_time=cfg.engine_time, engine_depth=cfg.engine_depth, show_progress=True,
                                   gen_workers=cfg.workers)
+        dt_gen = time.time() - t0_gen
+
+    # Heuristic: if self-teacher generation finished much faster than engine_time suggests, warn.
+    try:
+        if cfg.teacher == 'self' and cfg.engine_time and dt_gen > 0:
+            # Expected seconds if perfectly parallel across workers (lower bound)
+            par = max(1, int(cfg.workers or 1))
+            exp_lower = ( (len(dataset) * float(cfg.engine_time)) / par )
+            if dt_gen < exp_lower / 10.0:
+                rate = len(dataset) / max(1e-6, dt_gen)
+                print(f"[WARN] Generation completed too quickly for engine-time: {dt_gen:.2f}s vs expected ≥{exp_lower:.2f}s (/{par} workers). Rate={rate:.0f} pos/s. Likely using classical fallback labels.")
+    except Exception:
+        pass
+
+    # If dataset exposes raw positions, sample zero-rate to detect suspicious labeling
+    try:
+        if hasattr(dataset, 'positions') and isinstance(dataset.positions, list) and len(dataset.positions) > 0:
+            sample = dataset.positions if len(dataset.positions) < 5000 else dataset.positions[:5000]
+            zeros = sum(1 for (_, cp) in sample if abs(float(cp)) < 1e-6)
+            frac = zeros / float(len(sample))
+            if cfg.teacher == 'self' and frac > 0.9:
+                print(f"[WARN] >90% of sampled labels are 0.0 ({zeros}/{len(sample)}). Engine may be returning zero evals or labeling fell back.")
+    except Exception:
+        pass
     n = len(dataset)
     n_val = max(1, int(0.1 * n))
     n_train = n - n_val
