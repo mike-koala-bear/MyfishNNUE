@@ -14,6 +14,10 @@ permissions:
 env:
   TARGET_BRANCH: main
   NNUE_PATH: training/blended-ci.nnue
+  ENGINE_REPO: mike-koala-bear/myfish
+  ENGINE_REF: 19-c-engine-rewrite-third-time
+  ENGINE_BUILD_DIR: engine_src/build
+  ENGINE_BIN: engine_src/build/myfish
 
 jobs:
   train_nnue:
@@ -32,11 +36,19 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout external engine repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ENGINE_REPO }}
+          ref: ${{ env.ENGINE_REF }}
+          path: engine_src
+          fetch-depth: 0
+
       - name: Configure git (safe dir + bot identity)
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -52,8 +64,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release -j 2
+          cmake -S engine_src -B $ENGINE_BUILD_DIR -DCMAKE_BUILD_TYPE=Release
+          cmake --build $ENGINE_BUILD_DIR --config Release -j 2
+          test -x "$ENGINE_BIN" || (echo "Engine binary not found at $ENGINE_BIN" && exit 1)
+          file "$ENGINE_BIN" || true
 
       - name: Prepare training directories
         run: |
@@ -71,7 +85,7 @@ jobs:
             --from "$NNUE_PATH" \
             --selfplay 1000000 \
             --teacher self \
-            --engine-path ./build/myfish \
+            --engine-path "$ENGINE_BIN" \
             --engine-time 0.3 \
             --epochs 4 \
             --batch 512 \
