@@ -39,6 +39,7 @@ jobs:
       - name: Checkout external engine repo
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.GH_ENGINE_PAT }}
           repository: ${{ env.ENGINE_REPO }}
           ref: ${{ env.ENGINE_REF }}
           path: engine_src
