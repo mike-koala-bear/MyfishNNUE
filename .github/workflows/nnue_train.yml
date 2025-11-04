@@ -84,14 +84,14 @@ jobs:
         run: |
           python nnue_finetune.py \
             --from "$NNUE_PATH" \
-            --selfplay 1000000 \
+            --selfplay 200000 \
             --teacher self \
             --engine-path "$ENGINE_BIN" \
-            --engine-time 0.3 \
+            --engine-time 0.2 \
             --epochs 4 \
             --batch 512 \
-            --workers 2 \
-            --threads 2 \
+            --workers 4 \
+            --threads 1 \
             --out-nnue "$NNUE_PATH" \
             --device cpu
 
@@ -114,12 +114,12 @@ jobs:
             echo "No changes to $NNUE_PATH; skipping commit."
           fi
 
-      # - name: Re-run NNUE training workflow
-      #   if: success()
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GH_PAT }}
-      #   run: |
-      #     echo "Triggering next NNUE run..."
-      #     gh workflow run "Train NNUE (5-hour chunk)" \
-      #       --repo mike-koala-bear/myfish \
-      #       --ref 19-c-engine-rewrite-third-time \
+      - name: Re-run NNUE training workflow
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_ENGINE_PAT }}
+        run: |
+          echo "Triggering next NNUE run..."
+          gh workflow run "Train NNUE (5-hour chunk)" \
+            --repo mike-koala-bear/MyfishNNUE \
+            --ref main \
