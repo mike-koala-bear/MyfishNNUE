@@ -48,12 +48,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch numpy tqdm chess
 
-      - name: Build UCI engine (self-teacher)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release -j 2
+      # - name: Build UCI engine (self-teacher)
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y cmake build-essential
+      #     cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      #     cmake --build build --config Release -j 2
 
       - name: Prepare training directories
         run: |
