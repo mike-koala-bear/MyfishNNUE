@@ -1,3 +1,0 @@
-/Users/admin/Desktop/mike/myfish/build/CMakeFiles/myfish.dir
-/Users/admin/Desktop/mike/myfish/build/CMakeFiles/edit_cache.dir
-/Users/admin/Desktop/mike/myfish/build/CMakeFiles/rebuild_cache.dir
