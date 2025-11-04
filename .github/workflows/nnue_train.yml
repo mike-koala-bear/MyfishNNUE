@@ -1,0 +1,110 @@
+name: Train NNUE (5-hour chunk)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 19-c-engine-rewrite-third-time
+      # - main
+
+permissions:
+  actions: write       # ✅ needs "write" to trigger other workflows
+  contents: write
+
+env:
+  TARGET_BRANCH: 19-c-engine-rewrite-third-time
+  NNUE_PATH: training/blended-ci.nnue
+
+jobs:
+  train_nnue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    concurrency:
+      group: nnue-${{ github.ref_name || 'manual' }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git (safe dir + bot identity)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch numpy tqdm chess
+
+      - name: Build UCI engine (self-teacher)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j 2
+
+      - name: Prepare training directories
+        run: |
+          mkdir -p training/checkpoints training/out
+
+      - name: Ensure initial NNUE exists (first-run safety)
+        run: |
+          if [ ! -f "$NNUE_PATH" ] && [ -f "training/blended.nnue" ]; then
+            cp training/blended.nnue "$NNUE_PATH"
+          fi
+
+      - name: Run NNUE fine-tune (~5.5h)
+        run: |
+          python training/src/nnue_finetune.py \
+            --from "$NNUE_PATH" \
+            --selfplay 1000000 \
+            --teacher self \
+            --engine-path ./build/myfish \
+            --engine-time 0.5 \
+            --epochs 4 \
+            --batch 512 \
+            --workers 2 \
+            --threads 2 \
+            --out-nnue "$NNUE_PATH" \
+            --device cpu
+
+      - name: Upload NNUE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blended-nnue
+          path: ${{ env.NNUE_PATH }}
+          retention-days: 7
+
+      - name: Commit and push updated NNUE to target branch
+        if: success()
+        run: |
+          git pull --rebase origin "$TARGET_BRANCH" || true
+          if ! git diff --quiet -- "$NNUE_PATH"; then
+            git add "$NNUE_PATH"
+            git commit -m "(ci) NNUE auto-update (run ${{ github.run_number }})"
+            git push origin "HEAD:$TARGET_BRANCH" || (git pull --rebase origin "$TARGET_BRANCH" && git push origin "HEAD:$TARGET_BRANCH")
+          else
+            echo "No changes to $NNUE_PATH; skipping commit."
+          fi
+
+      # - name: Re-run NNUE training workflow
+      #   if: success()
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GH_PAT }}
+      #   run: |
+      #     echo "Triggering next NNUE run..."
+      #     gh workflow run "Train NNUE (5-hour chunk)" \
+      #       --repo mike-koala-bear/myfish \
+      #       --ref 19-c-engine-rewrite-third-time \
