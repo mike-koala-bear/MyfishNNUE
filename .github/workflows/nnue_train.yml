@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 env:
-  TARGET_BRANCH: 19-c-engine-rewrite-third-time
+  TARGET_BRANCH: main
   NNUE_PATH: training/blended-ci.nnue
 
 jobs:
