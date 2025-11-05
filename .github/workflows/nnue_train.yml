@@ -84,7 +84,7 @@ jobs:
         run: |
           python nnue_finetune.py \
             --from "$NNUE_PATH" \
-            --selfplay 200 \
+            --selfplay 200000 \
             --teacher self \
             --engine-path "$ENGINE_BIN" \
             --engine-time 0.2 \
@@ -117,7 +117,7 @@ jobs:
       - name: Re-run NNUE training workflow
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GH_ENGINE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Triggering next NNUE run..."
           gh workflow run "Train NNUE (5-hour chunk)"
