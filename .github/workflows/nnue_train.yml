@@ -84,7 +84,7 @@ jobs:
         run: |
           python nnue_finetune.py \
             --from "$NNUE_PATH" \
-            --selfplay 200000 \
+            --selfplay 20000 \
             --teacher self \
             --engine-path "$ENGINE_BIN" \
             --engine-time 0.2 \
