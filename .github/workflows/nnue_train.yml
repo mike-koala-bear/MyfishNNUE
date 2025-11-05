@@ -120,6 +120,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_ENGINE_PAT }}
         run: |
           echo "Triggering next NNUE run..."
-          gh workflow run "Train NNUE (5-hour chunk)" \
-            --repo mike-koala-bear/MyfishNNUE \
-            --ref main \
+          gh workflow run "Train NNUE (5-hour chunk)"
