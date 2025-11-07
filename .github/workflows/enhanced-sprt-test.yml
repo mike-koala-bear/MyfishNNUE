@@ -1,0 +1,269 @@
+name: Enhanced SPRT Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_id:
+        description: 'Test ID from dashboard'
+        required: true
+      dev_repo:
+        description: 'Dev repository (myfish or MyfishNNUE)'
+        required: true
+        default: 'myfish'
+      dev_branch:
+        description: 'Dev branch'
+        required: true
+        default: 'main'
+      dev_sha:
+        description: 'Dev commit SHA (optional)'
+        required: false
+      base_repo:
+        description: 'Base repository (myfish or MyfishNNUE)'
+        required: true
+        default: 'myfish'
+      base_branch:
+        description: 'Base branch'
+        required: true
+        default: 'main'
+      base_sha:
+        description: 'Base commit SHA (optional)'
+        required: false
+      elo0:
+        description: 'H0 Elo bound'
+        required: false
+        default: '0.0'
+      elo1:
+        description: 'H1 Elo bound'
+        required: false
+        default: '2.5'
+      tc_base:
+        description: 'Time control base (seconds)'
+        required: false
+        default: '8.0'
+      tc_inc:
+        description: 'Time control increment (seconds)'
+        required: false
+        default: '0.08'
+      max_games:
+        description: 'Maximum games'
+        required: false
+        default: '50000'
+
+permissions:
+  contents: read
+
+env:
+  DASHBOARD_URL: ${{ secrets.DASHBOARD_URL || 'http://localhost:3000' }}
+
+jobs:
+  sprt_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 480  # 8 hours
+    
+    steps:
+      - name: Update test status to running
+        continue-on-error: true
+        run: |
+          curl -X PUT "${{ env.DASHBOARD_URL }}/api/tests" \
+            -H "Content-Type: application/json" \
+            -d '{"id": "${{ github.event.inputs.test_id }}", "status": "running"}'
+
+      - name: Checkout testing scripts
+        uses: actions/checkout@v4
+        with:
+          repository: mike-koala-bear/MyfishNNUE
+          path: testing
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout dev engine source
+        uses: actions/checkout@v4
+        with:
+          repository: mike-koala-bear/${{ github.event.inputs.dev_repo }}
+          ref: ${{ github.event.inputs.dev_sha || github.event.inputs.dev_branch }}
+          path: dev
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout base engine source
+        uses: actions/checkout@v4
+        with:
+          repository: mike-koala-bear/${{ github.event.inputs.base_repo }}
+          ref: ${{ github.event.inputs.base_sha || github.event.inputs.base_branch }}
+          path: base
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests chess python-chess cutechess
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential g++ ninja-build
+
+      - name: Build dev engine
+        run: |
+          cd dev
+          if [ -d "src" ]; then
+            # Build from source
+            mkdir -p build
+            cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
+            ninja
+            cd ..
+            ENGINE_PATH="build/myfish"
+          else
+            echo "Error: No src directory found"
+            exit 1
+          fi
+          
+          # Get engine info
+          DEV_BENCH=$($ENGINE_PATH bench 2>&1 | grep -oP 'Nodes searched: \K\d+' || echo "0")
+          DEV_SHA=$(git rev-parse HEAD)
+          DEV_MSG=$(git log -1 --pretty=%B | head -n 1)
+          DEV_AUTHOR=$(git log -1 --pretty=%an)
+          DEV_DATE=$(git log -1 --pretty=%ai)
+          
+          echo "DEV_BENCH=$DEV_BENCH" >> $GITHUB_ENV
+          echo "DEV_SHA=$DEV_SHA" >> $GITHUB_ENV
+          echo "DEV_MSG=$DEV_MSG" >> $GITHUB_ENV
+          echo "DEV_AUTHOR=$DEV_AUTHOR" >> $GITHUB_ENV
+          echo "DEV_DATE=$DEV_DATE" >> $GITHUB_ENV
+          echo "DEV_ENGINE=$(pwd)/$ENGINE_PATH" >> $GITHUB_ENV
+
+      - name: Build base engine
+        run: |
+          cd base
+          if [ -d "src" ]; then
+            mkdir -p build
+            cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
+            ninja
+            cd ..
+            ENGINE_PATH="build/myfish"
+          else
+            echo "Error: No src directory found"
+            exit 1
+          fi
+          
+          # Get engine info
+          BASE_BENCH=$($ENGINE_PATH bench 2>&1 | grep -oP 'Nodes searched: \K\d+' || echo "0")
+          BASE_SHA=$(git rev-parse HEAD)
+          BASE_MSG=$(git log -1 --pretty=%B | head -n 1)
+          BASE_AUTHOR=$(git log -1 --pretty=%an)
+          BASE_DATE=$(git log -1 --pretty=%ai)
+          
+          echo "BASE_BENCH=$BASE_BENCH" >> $GITHUB_ENV
+          echo "BASE_SHA=$BASE_SHA" >> $GITHUB_ENV
+          echo "BASE_MSG=$BASE_MSG" >> $GITHUB_ENV
+          echo "BASE_AUTHOR=$BASE_AUTHOR" >> $GITHUB_ENV
+          echo "BASE_DATE=$BASE_DATE" >> $GITHUB_ENV
+          echo "BASE_ENGINE=$(pwd)/$ENGINE_PATH" >> $GITHUB_ENV
+
+      - name: Update test with engine info
+        continue-on-error: true
+        run: |
+          curl -X PUT "${{ env.DASHBOARD_URL }}/api/tests" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "id": "${{ github.event.inputs.test_id }}",
+              "dev": {
+                "bench": '"$DEV_BENCH"',
+                "sha": "'"$DEV_SHA"'",
+                "commitMessage": "'"$DEV_MSG"'",
+                "commitAuthor": "'"$DEV_AUTHOR"'",
+                "commitDate": "'"$DEV_DATE"'"
+              },
+              "base": {
+                "bench": '"$BASE_BENCH"',
+                "sha": "'"$BASE_SHA"'",
+                "commitMessage": "'"$BASE_MSG"'",
+                "commitAuthor": "'"$BASE_AUTHOR"'",
+                "commitDate": "'"$BASE_DATE"'"
+              }
+            }'
+
+      - name: Download opening book
+        run: |
+          mkdir -p books
+          cd books
+          # Download a small opening book
+          wget -q https://github.com/official-stockfish/books/raw/master/8moves_v3.pgn.zip || true
+          if [ -f 8moves_v3.pgn.zip ]; then
+            unzip -q 8moves_v3.pgn.zip
+          fi
+
+      - name: Run SPRT test
+        id: sprt
+        run: |
+          cd testing
+          python3 sprt-runner.py \
+            --engine1 "$DEV_ENGINE" \
+            --engine2 "$BASE_ENGINE" \
+            --test-id "${{ github.event.inputs.test_id }}" \
+            --elo0 "${{ github.event.inputs.elo0 }}" \
+            --elo1 "${{ github.event.inputs.elo1 }}" \
+            --tc-base "${{ github.event.inputs.tc_base }}" \
+            --tc-inc "${{ github.event.inputs.tc_inc }}" \
+            --max-games "${{ github.event.inputs.max_games }}" \
+            --dashboard-url "${{ env.DASHBOARD_URL }}"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.event.inputs.test_id }}
+          path: |
+            testing/test_result_*.json
+          retention-days: 30
+
+      - name: Update final status
+        if: always()
+        continue-on-error: true
+        run: |
+          STATUS="failed"
+          if [ "${{ steps.sprt.outcome }}" == "success" ]; then
+            STATUS="passed"
+          fi
+          
+          curl -X PUT "${{ env.DASHBOARD_URL }}/api/tests" \
+            -H "Content-Type: application/json" \
+            -d '{"id": "${{ github.event.inputs.test_id }}", "status": "'"$STATUS"'"}'
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testId = '${{ github.event.inputs.test_id }}';
+            const status = '${{ steps.sprt.outcome }}';
+            
+            const body = `## SPRT Test Results
+            
+            **Test ID**: \`${testId}\`
+            **Status**: ${status === 'success' ? '✅ PASSED' : '❌ FAILED'}
+            
+            **Engines**:
+            - Dev: \`${{ github.event.inputs.dev_repo }}@${{ env.DEV_SHA }}\`
+            - Base: \`${{ github.event.inputs.base_repo }}@${{ env.BASE_SHA }}\`
+            
+            **Configuration**:
+            - Elo bounds: [${{ github.event.inputs.elo0 }}, ${{ github.event.inputs.elo1 }}]
+            - Time control: ${{ github.event.inputs.tc_base }}+${{ github.event.inputs.tc_inc }}
+            
+            View full results in the [dashboard](${{ env.DASHBOARD_URL }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: body
+            });
