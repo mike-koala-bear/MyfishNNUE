@@ -6,48 +6,18 @@ on:
       test_id:
         description: 'Test ID from dashboard'
         required: true
-      dev_repo:
-        description: 'Dev repository (myfish or MyfishNNUE)'
+      dev_config:
+        description: 'Dev triple: repo:branch:sha'
         required: true
-        default: 'myfish'
-      dev_branch:
-        description: 'Dev branch'
+        default: 'myfish:main:'
+      base_config:
+        description: 'Base triple: repo:branch:sha'
         required: true
-        default: 'main'
-      dev_sha:
-        description: 'Dev commit SHA (optional)'
-        required: false
-      base_repo:
-        description: 'Base repository (myfish or MyfishNNUE)'
+        default: 'myfish:main:'
+      test_config:
+        description: 'Elo/time/games: elo0:elo1:tc_base:tc_inc:max_games'
         required: true
-        default: 'myfish'
-      base_branch:
-        description: 'Base branch'
-        required: true
-        default: 'main'
-      base_sha:
-        description: 'Base commit SHA (optional)'
-        required: false
-      elo0:
-        description: 'H0 Elo bound'
-        required: false
-        default: '0.0'
-      elo1:
-        description: 'H1 Elo bound'
-        required: false
-        default: '2.5'
-      tc_base:
-        description: 'Time control base (seconds)'
-        required: false
-        default: '8.0'
-      tc_inc:
-        description: 'Time control increment (seconds)'
-        required: false
-        default: '0.08'
-      max_games:
-        description: 'Maximum games'
-        required: false
-        default: '50000'
+        default: '0.0:2.5:8.0:0.08:50000'
 
 permissions:
   contents: read
@@ -68,6 +38,30 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"id": "${{ github.event.inputs.test_id }}", "status": "running"}'
 
+      - name: Parse combined inputs
+        id: parse
+        shell: bash
+        run: |
+          # dev_config: repo:branch:sha
+          IFS=':' read -r DEV_REPO DEV_BRANCH DEV_SHA <<< "${{ github.event.inputs.dev_config }}"
+          echo "DEV_REPO=$DEV_REPO" >> $GITHUB_ENV
+          echo "DEV_BRANCH=$DEV_BRANCH" >> $GITHUB_ENV
+          echo "DEV_SHA=$DEV_SHA" >> $GITHUB_ENV
+
+          # base_config: repo:branch:sha
+          IFS=':' read -r BASE_REPO BASE_BRANCH BASE_SHA <<< "${{ github.event.inputs.base_config }}"
+          echo "BASE_REPO=$BASE_REPO" >> $GITHUB_ENV
+          echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV
+          echo "BASE_SHA=$BASE_SHA" >> $GITHUB_ENV
+
+          # test_config: elo0:elo1:tc_base:tc_inc:max_games
+          IFS=':' read -r ELO0 ELO1 TC_BASE TC_INC MAX_GAMES <<< "${{ github.event.inputs.test_config }}"
+          echo "ELO0=$ELO0" >> $GITHUB_ENV
+          echo "ELO1=$ELO1" >> $GITHUB_ENV
+          echo "TC_BASE=$TC_BASE" >> $GITHUB_ENV
+          echo "TC_INC=$TC_INC" >> $GITHUB_ENV
+          echo "MAX_GAMES=$MAX_GAMES" >> $GITHUB_ENV
+
       - name: Checkout testing scripts
         uses: actions/checkout@v4
         with:
@@ -78,8 +72,8 @@ jobs:
       - name: Checkout dev engine source
         uses: actions/checkout@v4
         with:
-          repository: mike-koala-bear/${{ github.event.inputs.dev_repo }}
-          ref: ${{ github.event.inputs.dev_sha || github.event.inputs.dev_branch }}
+          repository: mike-koala-bear/${{ env.DEV_REPO }}
+          ref: ${{ env.DEV_SHA || env.DEV_BRANCH }}
           path: dev
           token: ${{ secrets.CROSS_REPO_TOKEN }}
           fetch-depth: 0
@@ -87,8 +81,8 @@ jobs:
       - name: Checkout base engine source
         uses: actions/checkout@v4
         with:
-          repository: mike-koala-bear/${{ github.event.inputs.base_repo }}
-          ref: ${{ github.event.inputs.base_sha || github.event.inputs.base_branch }}
+          repository: mike-koala-bear/${{ env.BASE_REPO }}
+          ref: ${{ env.BASE_SHA || env.BASE_BRANCH }}
           path: base
           token: ${{ secrets.CROSS_REPO_TOKEN }}
           fetch-depth: 0
@@ -208,11 +202,11 @@ jobs:
             --engine1 "$DEV_ENGINE" \
             --engine2 "$BASE_ENGINE" \
             --test-id "${{ github.event.inputs.test_id }}" \
-            --elo0 "${{ github.event.inputs.elo0 }}" \
-            --elo1 "${{ github.event.inputs.elo1 }}" \
-            --tc-base "${{ github.event.inputs.tc_base }}" \
-            --tc-inc "${{ github.event.inputs.tc_inc }}" \
-            --max-games "${{ github.event.inputs.max_games }}" \
+            --elo0 "$ELO0" \
+            --elo1 "$ELO1" \
+            --tc-base "$TC_BASE" \
+            --tc-inc "$TC_INC" \
+            --max-games "$MAX_GAMES" \
             --dashboard-url "${{ env.DASHBOARD_URL }}"
 
       - name: Upload test results
@@ -251,12 +245,12 @@ jobs:
             **Status**: ${status === 'success' ? '✅ PASSED' : '❌ FAILED'}
             
             **Engines**:
-            - Dev: \`${{ github.event.inputs.dev_repo }}@${{ env.DEV_SHA }}\`
-            - Base: \`${{ github.event.inputs.base_repo }}@${{ env.BASE_SHA }}\`
+            - Dev: \`${{ env.DEV_REPO }}@${{ env.DEV_SHA }}\`
+            - Base: \`${{ env.BASE_REPO }}@${{ env.BASE_SHA }}\`
             
             **Configuration**:
-            - Elo bounds: [${{ github.event.inputs.elo0 }}, ${{ github.event.inputs.elo1 }}]
-            - Time control: ${{ github.event.inputs.tc_base }}+${{ github.event.inputs.tc_inc }}
+            - Elo bounds: [${{ env.ELO0 }}, ${{ env.ELO1 }}]
+            - Time control: ${{ env.TC_BASE }}+${{ env.TC_INC }}
             
             View full results in the [dashboard](${{ env.DASHBOARD_URL }})
             `;
